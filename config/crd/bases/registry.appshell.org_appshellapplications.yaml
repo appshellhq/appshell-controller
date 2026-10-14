@@ -194,8 +194,12 @@ spec:
                           the roles against the contract it versions.
                         type: object
                       ref:
-                        description: ref is a published theme, pinned, as scope/name@version.
+                        description: |-
+                          ref is a published theme, pinned, as scope/name@version. Always pinned, as packages are:
+                          an unpinned ref would resolve to whatever version is newest at each apply, so the
+                          application's theme would change with no change here.
                         maxLength: 255
+                        pattern: ^[a-z0-9][a-z0-9-_]*/[a-z0-9][a-z0-9-_.]*@.+$
                         type: string
                     type: object
                   title:

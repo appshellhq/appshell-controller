@@ -53,9 +53,12 @@ type ColorScheme string
 // ThemeSelection chooses an application's theme: a published theme pinned by ref, or a base
 // and accent the registry resolves to one.
 type ThemeSelection struct {
-	// ref is a published theme, pinned, as scope/name@version.
+	// ref is a published theme, pinned, as scope/name@version. Always pinned, as packages are:
+	// an unpinned ref would resolve to whatever version is newest at each apply, so the
+	// application's theme would change with no change here.
 	// +optional
 	// +kubebuilder:validation:MaxLength=255
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9-_]*/[a-z0-9][a-z0-9-_.]*@.+$`
 	Ref *string `json:"ref,omitempty"`
 
 	// base is a theme preset to resolve, with accent, to a published theme.

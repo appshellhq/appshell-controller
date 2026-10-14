@@ -92,6 +92,24 @@ var _ = Describe("AppshellApplication", func() {
 			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
 		})
 
+		It("refuses a theme ref that isn't pinned, which would drift to each new version", func() {
+			app := application("unpinned-theme", registryv1alpha1.AppshellApplicationSpec{
+				Name:  storefront,
+				Shell: &registryv1alpha1.ShellConfig{Theme: &registryv1alpha1.ThemeSelection{Ref: new("appshell/neutral-ice")}},
+			})
+			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
+		})
+
+		It("accepts a pinned theme ref", func() {
+			app := application("pinned-theme", registryv1alpha1.AppshellApplicationSpec{
+				Name: storefront,
+				Shell: &registryv1alpha1.ShellConfig{
+					Theme: &registryv1alpha1.ThemeSelection{Ref: new("appshell/neutral-ice@1.0.0")},
+				},
+			})
+			Expect(k8sClient.Create(ctx, app)).To(Succeed())
+		})
+
 		It("refuses a favicon under any scheme but http or https", func() {
 			app := application("favicon", registryv1alpha1.AppshellApplicationSpec{
 				Name:  storefront,
