@@ -11,7 +11,6 @@ kubeVersion: ">=1.30.0-0"
 home: https://github.com/appshellhq/appshell-controller
 sources:
   - https://github.com/appshellhq/appshell-controller
-license: Apache-2.0
 keywords:
   - appshell
   - micro-frontends

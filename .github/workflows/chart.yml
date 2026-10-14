@@ -69,3 +69,5 @@ jobs:
           refuse --set registry.url=http://registry.example.com
           refuse --set registry.url=https://registry.example.com --set token.expirationSeconds=7200
           refuse --set registry.url=https://registry.example.com --set image.digest=latest
+          refuse --set registry.url=https://registry.example.com --set reconcileInterval=30s
+          refuse --set registry.url=https://registry.example.com --set replicaCounts=2

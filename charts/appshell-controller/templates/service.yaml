@@ -4,7 +4,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "appshell-controller.fullname" . }}-metrics
+  # Truncated before the suffix: a Service name is at most 63 characters, and the full name can
+  # already be that long.
+  name: {{ printf "%s-metrics" (include "appshell-controller.fullname" . | trunc 55 | trimSuffix "-") }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "appshell-controller.labels" . | nindent 4 }}
