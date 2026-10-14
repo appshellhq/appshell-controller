@@ -20,7 +20,7 @@ COPY . .
 # Static, and reproducible: -trimpath keeps build paths out of the binary, and -s -w drop the
 # symbol and debug tables a distroless image has no tools to read.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o manager cmd/main.go
+    go build -trimpath -ldflags="-s -w" -o manager ./cmd
 
 # No shell, no package manager, nothing but the binary and CA certificates.
 FROM gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
