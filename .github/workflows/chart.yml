@@ -55,7 +55,10 @@ jobs:
         run: |
           set -o pipefail
           render() { helm template ci "$CHART" --namespace appshell "$@"; }
-          validate() { kubeconform -strict -summary -kubernetes-version 1.33.0 -; }
+          # Every kind validated against Kubernetes' schemas, strictly, but the CRD: kubeconform has no
+          # schema for CustomResourceDefinition itself, and the CRD's own schema is controller-gen's,
+          # checked above against the generated copy.
+          validate() { kubeconform -strict -summary -kubernetes-version 1.33.0 -skip CustomResourceDefinition -; }
           render --set registry.url=https://registry.example.com | validate
           render --set registry.url=https://registry.example.com --set 'watchNamespaces={apps,shop}' | validate
           render --set registry.url=https://registry.example.com --set metrics.enabled=false \
@@ -71,3 +74,5 @@ jobs:
           refuse --set registry.url=https://registry.example.com --set image.digest=latest
           refuse --set registry.url=https://registry.example.com --set reconcileInterval=30s
           refuse --set registry.url=https://registry.example.com --set replicaCounts=2
+          refuse --set registry.url=https://registry.example.com --set metrics.port=8081
+          refuse --set registry.url=https://registry.example.com --set podLabels.app\\.kubernetes\\.io/name=other

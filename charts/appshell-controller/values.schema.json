@@ -158,7 +158,11 @@
         "port": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 65535
+          "maximum": 65535,
+          "description": "Any port but 8081, which the health probes use.",
+          "not": {
+            "const": 8081
+          }
         }
       },
       "additionalProperties": false
@@ -194,6 +198,21 @@
       "type": "object",
       "additionalProperties": {
         "type": "string"
+      },
+      "description": "Extra pod labels. Never the selector's own keys, which would detach the pods from the Deployment.",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "app.kubernetes.io/name"
+            ]
+          },
+          {
+            "required": [
+              "app.kubernetes.io/instance"
+            ]
+          }
+        ]
       }
     },
     "priorityClassName": {
