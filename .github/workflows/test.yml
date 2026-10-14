@@ -1,0 +1,66 @@
+name: Tests
+
+# Pushes to main and pull requests; a branch pushed without a pull request runs nothing, and a
+# pull request's superseded runs are cancelled.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+jobs:
+  test:
+    permissions:
+      contents: read
+    name: Unit and envtest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      # What's committed is what builds: go.mod and go.sum tidy, and the CRD, RBAC and deepcopy
+      # code generated from the types as they stand. A type changed without regenerating would
+      # otherwise ship a CRD that disagrees with the controller.
+      - name: Check modules are tidy
+        run: go mod tidy -diff
+
+      - name: Check generated code is committed
+        run: |
+          make manifests generate
+          git diff --exit-code -- config api
+
+      - name: Run tests
+        run: make test
+
+  vulnerabilities:
+    permissions:
+      contents: read
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      # Reports only vulnerabilities in code the controller actually calls, so a finding is one
+      # to act on.
+      - name: Scan for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

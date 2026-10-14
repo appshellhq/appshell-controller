@@ -1,0 +1,20 @@
+# An application in the appshell registry, kept at this state by appshell-controller. The registry
+# must trust the controller's service account to apply it: a trusted-deployment record on the
+# application, added by one of its owners with
+#
+#   appshell trust add acme --application storefront \
+#     --kubernetes <cluster issuer> --namespace <controller namespace> --service-account <controller account>
+apiVersion: registry.appshell.org/v1alpha1
+kind: AppshellApplication
+metadata:
+  name: storefront
+spec:
+  name: acme/storefront
+  shell:
+    root: ContainerModule/Container
+    title: Storefront
+  packages:
+    - acme/catalog@1.2.0
+    - acme/cart@2.0.1
+  # Orphan, the default: deleting this resource leaves the application as it is.
+  deletionPolicy: Orphan
