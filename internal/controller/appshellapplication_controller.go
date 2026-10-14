@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -32,6 +33,9 @@ import (
 
 // ReasonAwaitingApply is the Ready reason until the controller applies to the registry.
 const ReasonAwaitingApply = "AwaitingApply"
+
+// conflictRetry is how soon a status write that lost a race is retried: expected, not an error.
+const conflictRetry = time.Second
 
 // AppshellApplicationReconciler keeps each AppshellApplication's registry application at the
 // state its spec declares.
@@ -71,10 +75,18 @@ func (r *AppshellApplicationReconciler) Reconcile(ctx context.Context, req ctrl.
 		ObservedGeneration: app.Generation,
 	})
 
-	// A merge patch from what was read, so a concurrent status writer isn't overwritten wholesale.
-	if err := r.Status().Patch(ctx, &app, client.MergeFrom(before)); err != nil {
+	// Optimistically locked to the version read: a merge patch replaces lists like conditions
+	// whole, so without the lock a concurrent status write would be silently overwritten. With
+	// it, a newer version is a conflict, and the request is retried against what's there now.
+	patch := client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})
+	if err := r.Status().Patch(ctx, &app, patch); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
+		}
+		if apierrors.IsConflict(err) {
+			log.V(1).Info("Status changed since it was read; retrying", "application", app.Spec.Name)
+
+			return ctrl.Result{RequeueAfter: conflictRetry}, nil
 		}
 
 		return ctrl.Result{}, err

@@ -21,10 +21,13 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	registryv1alpha1 "github.com/appshellhq/appshell-controller/api/v1alpha1"
@@ -89,6 +92,22 @@ var _ = Describe("AppshellApplication", func() {
 			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
 		})
 
+		It("refuses a favicon under any scheme but http or https", func() {
+			app := application("favicon", registryv1alpha1.AppshellApplicationSpec{
+				Name:  storefront,
+				Shell: &registryv1alpha1.ShellConfig{FaviconURL: new("javascript:alert(1)")},
+			})
+			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
+		})
+
+		It("accepts a favicon as a relative path, as the registry does", func() {
+			app := application("relative-favicon", registryv1alpha1.AppshellApplicationSpec{
+				Name:  storefront,
+				Shell: &registryv1alpha1.ShellConfig{FaviconURL: new("/favicon.ico")},
+			})
+			Expect(k8sClient.Create(ctx, app)).To(Succeed())
+		})
+
 		// A different application is a different resource; retargeting one would leave the
 		// first application unreconciled and silently take over the second.
 		It("keeps the name fixed once set", func() {
@@ -130,6 +149,26 @@ var _ = Describe("AppshellApplication", func() {
 			Expect(ready).NotTo(BeNil())
 			Expect(ready.Status).To(Equal(metav1.ConditionUnknown))
 			Expect(ready.Reason).To(Equal(ReasonAwaitingApply))
+		})
+
+		// Another writer got there first. Retried against what's there now, rather than written
+		// over, and not reported as an error: a lost race is expected.
+		It("retries a status write that lost a race, instead of overwriting it", func() {
+			watching, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+			conflicted := interceptor.NewClient(watching, interceptor.Funcs{
+				SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch,
+					...client.SubResourcePatchOption) error {
+					return apierrors.NewConflict(schema.GroupResource{
+						Group: registryv1alpha1.GroupVersion.Group, Resource: "appshellapplications",
+					}, name, nil)
+				},
+			})
+			reconciler := &AppshellApplicationReconciler{Client: conflicted, Scheme: k8sClient.Scheme()}
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(conflictRetry))
 		})
 
 		It("does nothing for a resource that's gone", func() {

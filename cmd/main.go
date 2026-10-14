@@ -29,6 +29,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -62,6 +63,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var watchNamespaces string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -82,8 +84,13 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&watchNamespaces, "watch-namespaces", "",
+		"Comma-separated namespaces whose AppshellApplications this controller reconciles. Empty watches every "+
+			"namespace. Every resource it watches is applied with its identity, so this, with who may create "+
+			"AppshellApplications, decides who can use that identity.")
+	// Structured JSON by default, as a production log pipeline wants it; --zap-devel for local runs.
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -158,8 +165,20 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	// Only the namespaces it was given, when it was given any: the cache, and so everything the
+	// controller can see and act on, is limited to them.
+	cacheOptions := cache.Options{}
+	if namespaces := namespacesOf(watchNamespaces); len(namespaces) > 0 {
+		setupLog.Info("Watching only these namespaces", "namespaces", namespaces)
+		cacheOptions.DefaultNamespaces = make(map[string]cache.Config, len(namespaces))
+		for _, namespace := range namespaces {
+			cacheOptions.DefaultNamespaces[namespace] = cache.Config{}
+		}
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
+		Cache:                  cacheOptions,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,

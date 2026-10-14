@@ -137,8 +137,11 @@ spec:
                     maxLength: 1024
                     type: string
                   faviconUrl:
-                    description: faviconUrl is the favicon the shell links to.
+                    description: |-
+                      faviconUrl is the favicon the shell links to: an http or https URL, or a path relative to the
+                      application, as the registry accepts. Never another scheme.
                     maxLength: 2048
+                    pattern: ^(https?://|[^:]*$)
                     type: string
                   root:
                     description: root is the component the shell renders at its root,

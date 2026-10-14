@@ -63,35 +63,25 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
-# TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
-# The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# kubectl kuberc is disabled by default for test isolation; enable with:
-# - KUBECTL_KUBERC=true
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
+# The e2e tests run in a Kind cluster this target creates and always deletes, pass or fail. It
+# refuses to start if a cluster of that name already exists, rather than reusing one it didn't
+# create and then deleting it. kubectl kuberc is disabled for isolation; KUBECTL_KUBERC=true enables it.
 KIND_CLUSTER ?= appshell-controller-test-e2e
 
-.PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
-	@case "$$($(KIND) get clusters)" in \
-		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
-		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
-	esac
-
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: manifests generate fmt vet ## Run the e2e tests in a Kind cluster created and deleted for the run.
+	@command -v $(KIND) >/dev/null 2>&1 || { echo "Kind is not installed. Please install Kind manually."; exit 1; }
+	@if $(KIND) get clusters 2>/dev/null | grep -qxF '$(KIND_CLUSTER)'; then \
+		echo "Kind cluster '$(KIND_CLUSTER)' already exists, and this run didn't create it."; \
+		echo "Delete it ('make cleanup-test-e2e') or choose another with KIND_CLUSTER=<name>."; \
+		exit 1; \
+	fi
+	@trap '$(KIND) delete cluster --name $(KIND_CLUSTER)' EXIT; \
+	$(KIND) create cluster --name $(KIND_CLUSTER); \
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
+cleanup-test-e2e: ## Delete the e2e Kind cluster (KIND_CLUSTER), e.g. after an interrupted run.
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 .PHONY: lint
@@ -131,10 +121,10 @@ docker-push: ## Push docker image with the manager.
 PLATFORMS ?= linux/amd64,linux/arm64
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	- $(CONTAINER_TOOL) buildx create --name appshell-controller-builder
-	$(CONTAINER_TOOL) buildx use appshell-controller-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} .
-	- $(CONTAINER_TOOL) buildx rm appshell-controller-builder
+	@$(CONTAINER_TOOL) buildx create --name appshell-controller-builder 2>/dev/null || true
+	@trap '$(CONTAINER_TOOL) buildx rm appshell-controller-builder' EXIT; \
+	$(CONTAINER_TOOL) buildx build --builder appshell-controller-builder --push \
+		--platform=$(PLATFORMS) --tag ${IMG} .
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
@@ -150,13 +140,11 @@ endif
 
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" apply -f -; else echo "No CRDs to install; skipping."; fi
+	"$(KUSTOMIZE)" build config/crd | "$(KUBECTL)" apply -f -
 
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
+	"$(KUSTOMIZE)" build config/crd | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.

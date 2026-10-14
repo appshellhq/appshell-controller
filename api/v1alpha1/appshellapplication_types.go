@@ -105,9 +105,11 @@ type ShellConfig struct {
 	// +optional
 	Theme *ThemeSelection `json:"theme,omitempty"`
 
-	// faviconUrl is the favicon the shell links to.
+	// faviconUrl is the favicon the shell links to: an http or https URL, or a path relative to the
+	// application, as the registry accepts. Never another scheme.
 	// +optional
 	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^(https?://|[^:]*$)`
 	FaviconURL *string `json:"faviconUrl,omitempty"`
 
 	// stylesheetUrl is a stylesheet the shell links to, over http or https.

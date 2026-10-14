@@ -52,8 +52,13 @@ configuration, never a resource's.** If a resource could name a URL, anyone able
 send the controller's token wherever they liked.
 
 **Who can apply.** The controller applies every `AppshellApplication` it watches under one
-identity. Granting `create` on `appshellapplications`, and choosing which namespaces the controller
-watches, decides who may use that identity, as granting `create` on Argo CD Applications does.
+identity, so who may use that identity is decided by two things, as with who may create Argo CD
+Applications:
+
+- who may `create` `appshellapplications`, in Kubernetes RBAC;
+- which namespaces the controller watches: `--watch-namespaces=a,b` limits its cache, and so
+  everything it sees and acts on, to those. Left empty, it watches every namespace, and the
+  manifests here grant it a ClusterRole to match.
 
 ## Development
 
