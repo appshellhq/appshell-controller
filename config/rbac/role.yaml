@@ -5,12 +5,20 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - registry.appshell.org
   resources:
   - appshellapplications
   verbs:
   - get
   - list
+  - patch
   - watch
 - apiGroups:
   - registry.appshell.org

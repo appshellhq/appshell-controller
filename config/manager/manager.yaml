@@ -63,6 +63,10 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          # The registry to apply to. A placeholder (.invalid is reserved and never resolves):
+          # an overlay sets it, with the token's audience below, to its registry's.
+          - --registry-url=https://registry.example.invalid
+          - --registry-token-path=/var/run/secrets/appshell/token
         image: controller:latest
         name: manager
         ports:
@@ -96,7 +100,23 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-        volumeMounts: []
-      volumes: []
+        volumeMounts:
+          - name: registry-token
+            mountPath: /var/run/secrets/appshell
+            readOnly: true
+      volumes:
+        # The controller's identity to the registry: its own service-account token, minted by the
+        # kubelet for the registry's deploy audience and rotated before it expires. No secret is
+        # stored; the registry trusts this service account through a trusted-deployment record.
+        - name: registry-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  # The registry's deploy audience: its URL with /deploy, unless its operator set
+                  # TRUSTED_DEPLOYMENT_AUDIENCE to something else.
+                  audience: https://registry.example.invalid/deploy
+                  # The shortest Kubernetes allows. The registry accepts at most an hour.
+                  expirationSeconds: 600
+                  path: token
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
