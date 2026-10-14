@@ -1,0 +1,26 @@
+apiVersion: v2
+name: appshell-controller
+description: >-
+  Keeps applications in an appshell registry at the state declared in your cluster, applying
+  AppshellApplication resources with the controller's own workload identity.
+type: application
+# Set by release-please from conventional commits, with appVersion, on each release.
+version: 0.0.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.30.0-0"
+home: https://github.com/appshellhq/appshell-controller
+sources:
+  - https://github.com/appshellhq/appshell-controller
+keywords:
+  - appshell
+  - micro-frontends
+  - gitops
+  - controller
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/crds: |
+    - kind: AppshellApplication
+      version: v1alpha1
+      name: appshellapplications.registry.appshell.org
+      displayName: AppshellApplication
+      description: An application in an appshell registry, kept at the state its spec declares.

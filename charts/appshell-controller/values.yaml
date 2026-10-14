@@ -1,0 +1,114 @@
+# appshell-controller's values. The registry URL is the one setting with no default.
+
+registry:
+  # -- The appshell registry to apply to, as an https URL. Required. The controller presents its
+  # token here and nowhere else; a resource can never name another.
+  url: ""
+  # -- The audience the controller's token is minted for: the registry's deploy audience. Left
+  # empty, the registry URL with /deploy, which is the registry's default; set it only when the
+  # registry's operator set TRUSTED_DEPLOYMENT_AUDIENCE to something else.
+  audience: ""
+  # -- Allow a plain http registry. For local development only: the token is a credential.
+  allowInsecure: false
+
+# The controller's identity to the registry: its own service-account token, projected by the
+# kubelet for the registry's deploy audience and rotated before it expires. The registry trusts
+# this service account through a trusted-deployment record on each application.
+token:
+  # -- The token's lifetime. 600 is the shortest Kubernetes allows; the registry accepts at most
+  # an hour.
+  expirationSeconds: 600
+
+# -- Namespaces whose AppshellApplications this controller reconciles. Empty reconciles every
+# namespace, with a ClusterRole; listed, it reconciles only those, with a Role in each. Every
+# resource it reconciles is applied with its one identity, so this, with who may create
+# AppshellApplications, decides who can use that identity.
+watchNamespaces: []
+
+# -- How often an applied AppshellApplication is applied again, which reverts drift in the
+# registry. At least a minute.
+reconcileInterval: 10m
+
+# -- Log level: info, debug, or error. Logs are structured JSON.
+logLevel: info
+
+image:
+  repository: ghcr.io/appshellhq/appshell-controller
+  # -- Defaults to the chart's appVersion.
+  tag: ""
+  # -- An image digest (sha256:…). When set, it's used instead of the tag, so what runs can't
+  # change under a moved tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# -- More than one replica is safe: leader election keeps one active, and the others take over.
+replicaCount: 1
+
+leaderElection:
+  enabled: true
+
+serviceAccount:
+  # -- Create the controller's service account. Its name is what trusted-deployment records
+  # name, with this release's namespace.
+  create: true
+  # -- Defaults to the release's full name.
+  name: ""
+  annotations: {}
+
+rbac:
+  # -- Create the controller's RBAC: its own resources and their status, its finalizer, and
+  # Events; leader election in its own namespace; and what the secure metrics endpoint needs.
+  create: true
+
+crds:
+  # -- Install the AppshellApplication CRD with the chart.
+  install: true
+  # -- Keep the CRD when the release is uninstalled, so uninstalling the controller never deletes
+  # every AppshellApplication with it.
+  keep: true
+
+metrics:
+  # -- Serve metrics over https on 8443, behind Kubernetes authentication and authorization: a
+  # scraper needs a token bound to the metrics-reader ClusterRole.
+  enabled: true
+  port: 8443
+
+networkPolicy:
+  # -- Admit traffic to the controller only to its metrics port, and only from the namespaces
+  # below. Its egress, to the API server and the registry, is left to the cluster's own policy,
+  # since where those are differs from one cluster to the next.
+  enabled: true
+  # -- Namespaces that may scrape metrics.
+  metricsNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: monitoring
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  # No CPU limit, which only throttles; memory is limited, which a leak would otherwise exhaust.
+  limits:
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

@@ -1,0 +1,14 @@
+appshell-controller is reconciling AppshellApplications {{ if .Values.watchNamespaces }}in {{ join ", " .Values.watchNamespaces }}{{ else }}in every namespace{{ end }} against {{ include "appshell-controller.registryURL" . }}.
+
+The registry has to trust it before it can apply anything: on each application, one of its owners
+adds a trusted-deployment record naming this service account:
+
+  appshell trust add <scope> --application <name> \
+    --kubernetes <this cluster's service-account issuer> \
+    --namespace {{ .Release.Namespace }} --service-account {{ include "appshell-controller.serviceAccountName" . }}
+
+Its token is minted for {{ include "appshell-controller.audience" . }}.
+
+Check what it's doing with:
+
+  kubectl get appshellapplications --all-namespaces

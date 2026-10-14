@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "appshell-controller values",
+  "type": "object",
+  "required": [
+    "registry"
+  ],
+  "properties": {
+    "registry": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The appshell registry, as an http(s) URL. Required.",
+          "pattern": "^https?://[^/?#@\\s]+(/[^?#\\s]*)?$"
+        },
+        "audience": {
+          "type": "string",
+          "description": "The token's audience; defaults to the registry URL with /deploy.",
+          "pattern": "^(https?://\\S+)?$"
+        },
+        "allowInsecure": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "token": {
+      "type": "object",
+      "properties": {
+        "expirationSeconds": {
+          "type": "integer",
+          "minimum": 600,
+          "maximum": 3600
+        }
+      },
+      "additionalProperties": false
+    },
+    "watchNamespaces": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+        "maxLength": 63
+      },
+      "uniqueItems": true
+    },
+    "reconcileInterval": {
+      "type": "string",
+      "description": "At least a minute, as hours and minutes (10m, 1h, 1h30m); the controller refuses less.",
+      "pattern": "^(?:[0-9]*[1-9][0-9]*h(?:[0-9]+m)?|(?:[0-9]+h)?[0-9]*[1-9][0-9]*m)(?:[0-9]+s)?$"
+    },
+    "logLevel": {
+      "type": "string",
+      "enum": [
+        "info",
+        "debug",
+        "error"
+      ]
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^(sha256:[a-f0-9]{64})?$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "leaderElection": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "create": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "crds": {
+      "type": "object",
+      "properties": {
+        "install": {
+          "type": "boolean"
+        },
+        "keep": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Any port but 8081, which the health probes use.",
+          "not": {
+            "const": 8081
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "metricsNamespaceSelector": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object"
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Extra pod labels. Never the selector's own keys, which would detach the pods from the Deployment.",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "app.kubernetes.io/name"
+            ]
+          },
+          {
+            "required": [
+              "app.kubernetes.io/instance"
+            ]
+          }
+        ]
+      }
+    },
+    "priorityClassName": {
+      "type": "string"
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "topologySpreadConstraints": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "global": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

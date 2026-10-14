@@ -1,0 +1,21 @@
+{{- if .Values.metrics.enabled }}
+# The secure metrics endpoint. A scraper authenticates with its own service-account token, which
+# must be bound to the metrics-reader ClusterRole.
+apiVersion: v1
+kind: Service
+metadata:
+  # Truncated before the suffix: a Service name is at most 63 characters, and the full name can
+  # already be that long.
+  name: {{ printf "%s-metrics" (include "appshell-controller.fullname" . | trunc 55 | trimSuffix "-") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appshell-controller.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "appshell-controller.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}
