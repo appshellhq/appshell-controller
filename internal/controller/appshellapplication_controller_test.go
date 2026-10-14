@@ -256,6 +256,22 @@ var _ = Describe("Reconciling an AppshellApplication", func() {
 			Expect(deactivation.Spec.Shell).To(BeNil())
 		})
 
+		// A retry after a lost race finds nothing left to deactivate, and says nothing.
+		It("says nothing when deactivating moves nothing", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			emitted() // the apply's own event
+
+			fake.result = registry.Result{ID: storefront, Changed: new(false)}
+			deleteIt()
+			_, err = reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gone()).To(BeTrue())
+			Expect(emitted()).To(BeEmpty())
+		})
+
 		// Never silently skips what the policy promised, and never holds a resource with no way out.
 		It("holds a Delete resource it can't deactivate, until the policy becomes Orphan", func() {
 			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,

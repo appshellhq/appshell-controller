@@ -163,13 +163,12 @@ func NewClient(baseURL, tokenPath string, allowInsecure bool) (*Client, error) {
 	}, nil
 }
 
-// WithHTTPClient replaces the transport, keeping the redirect and timeout rules. For tests.
+// WithHTTPClient replaces the transport, keeping the redirect and timeout rules whatever the
+// supplied client says. For tests.
 func (c *Client) WithHTTPClient(hc *http.Client) *Client {
 	copied := *hc
 	copied.CheckRedirect = c.http.CheckRedirect
-	if copied.Timeout == 0 {
-		copied.Timeout = c.http.Timeout
-	}
+	copied.Timeout = c.http.Timeout
 	c.http = &copied
 
 	return c

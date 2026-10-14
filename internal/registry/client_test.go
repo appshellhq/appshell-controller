@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func writeToken(t *testing.T, value string) string {
@@ -226,6 +227,22 @@ func TestNewClientRefusesWhereTheTokenShouldNotGo(t *testing.T) {
 	}
 	if _, err := NewClient("http://localhost:7070", token, true); err != nil {
 		t.Errorf("refused plain http with allowInsecure: %v", err)
+	}
+}
+
+// The rules hold whatever client a test supplies: no redirects, and the 30-second bound.
+func TestWithHTTPClientKeepsTheRules(t *testing.T) {
+	c, err := NewClient("https://registry.example.com", writeToken(t, "the-token"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.WithHTTPClient(&http.Client{Timeout: time.Hour})
+
+	if c.http.Timeout != requestTimeout {
+		t.Errorf("timeout %s, want %s", c.http.Timeout, requestTimeout)
+	}
+	if c.http.CheckRedirect == nil {
+		t.Error("the redirect rule was dropped")
 	}
 }
 

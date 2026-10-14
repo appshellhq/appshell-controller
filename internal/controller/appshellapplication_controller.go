@@ -157,7 +157,8 @@ func (r *AppshellApplicationReconciler) finalize(ctx context.Context, app *regis
 			Spec:       registry.Spec{Packages: &none},
 		}
 
-		if _, err := r.Registry.Apply(ctx, deactivate); err != nil {
+		result, err := r.Registry.Apply(ctx, deactivate)
+		if err != nil {
 			before := app.DeepCopy()
 			wasReason := readyReason(app)
 			r.setReady(app, metav1.ConditionFalse, ReasonDeactivationFailed, fmt.Sprintf(
@@ -174,8 +175,11 @@ func (r *AppshellApplicationReconciler) finalize(ctx context.Context, app *regis
 			return requeueFor(err)
 		}
 
-		r.event(app, corev1.EventTypeNormal, "Deactivated", "Deactivate",
-			fmt.Sprintf("Deactivated every package in %s", app.Spec.Name))
+		// Only when something moved: a retry after a lost race finds nothing left to deactivate.
+		if moved(result) {
+			r.event(app, corev1.EventTypeNormal, "Deactivated", "Deactivate",
+				fmt.Sprintf("Deactivated %s: %s", app.Spec.Name, strings.Join(result.Changes, ", ")))
+		}
 	}
 
 	before := app.DeepCopy()
@@ -206,7 +210,7 @@ func (r *AppshellApplicationReconciler) applied(
 	}
 
 	// Only when something moved: an unchanged apply on every interval would be an Event each time.
-	if changed := result.Changed == nil || *result.Changed; changed && len(result.Changes) > 0 {
+	if moved(result) {
 		r.event(app, corev1.EventTypeNormal, ReasonApplied, "Apply",
 			fmt.Sprintf("Applied %s: %s", app.Spec.Name, strings.Join(result.Changes, ", ")))
 	}
@@ -240,6 +244,12 @@ func (r *AppshellApplicationReconciler) failed(
 	}
 
 	return requeueFor(err)
+}
+
+// moved reports whether an apply changed anything. A registry that predates `changed` doesn't send
+// it, so its changes alone decide.
+func moved(result registry.Result) bool {
+	return (result.Changed == nil || *result.Changed) && len(result.Changes) > 0
 }
 
 // readyReason is the Ready condition's current reason, or "" before there is one.
