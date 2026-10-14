@@ -1,0 +1,22 @@
+# Dependency updates as pull requests, each reviewed and tested like any change: Go modules,
+# the actions the workflows pin by SHA, and the base images the Dockerfile pins by digest.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # Kubernetes' modules move together; one PR for them, not one each.
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
