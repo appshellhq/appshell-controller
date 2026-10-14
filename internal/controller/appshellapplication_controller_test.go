@@ -31,9 +31,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	registryv1alpha1 "github.com/appshellhq/appshell-controller/api/v1alpha1"
@@ -281,6 +284,35 @@ var _ = Describe("Reconciling an AppshellApplication", func() {
 			Expect(fake.calls()).To(HaveLen(calls)) // let go without trying again
 		})
 
+		// No finalizer yet, so it goes; and it was never applied, so there is nothing to deactivate.
+		It("lets a Delete resource go that was deleted before it was ever reconciled", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
+			deleteIt()
+			Expect(gone()).To(BeTrue())
+
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.calls()).To(BeEmpty())
+		})
+
+		It("warns once when it can't deactivate, not on every poll while it's held", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			emitted() // the apply's own event
+
+			fake.err = &registry.Error{Status: 403, Message: "No trusted deployer",
+				Refusal: registry.RefusalNotTrusted}
+			deleteIt()
+			for range 3 {
+				_, err = reconcileOnce()
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(emitted()).To(HaveLen(1))
+		})
+
 		It("releases the finalizer when the policy changes from Delete to Orphan", func() {
 			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
 				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
@@ -294,6 +326,53 @@ var _ = Describe("Reconciling an AppshellApplication", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(fetch().Finalizers).To(BeEmpty())
 		})
+	})
+})
+
+// Under a running manager, as in production: the controller's own status writes must not trigger
+// another apply, or it would apply continuously instead of once per interval.
+var _ = Describe("Running under a manager", func() {
+	It("applies a resource once, and isn't retriggered by its own status writes", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+			Scheme:                 k8sClient.Scheme(),
+			Metrics:                metricsserver.Options{BindAddress: "0"},
+			HealthProbeBindAddress: "0",
+			// Each test that starts a manager registers the same controller name.
+			Controller: config.Controller{SkipNameValidation: new(true)},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		fake := &fakeRegistry{result: registry.Result{ID: storefront, Changed: new(true),
+			Changes: []string{"activated " + catalog}}}
+		Expect((&AppshellApplicationReconciler{
+			Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Registry: fake,
+			Recorder: events.NewFakeRecorder(20), Interval: interval,
+		}).SetupWithManager(mgr)).To(Succeed())
+
+		done := make(chan struct{})
+		go func() {
+			defer GinkgoRecover()
+			defer close(done)
+			Expect(mgr.Start(ctx)).To(Succeed())
+		}()
+		DeferCleanup(func() { cancel(); <-done; removeAll(context.Background()) })
+
+		Expect(k8sClient.Create(ctx, application("managed", registryv1alpha1.AppshellApplicationSpec{
+			Name: storefront, Packages: []string{catalog},
+		}))).To(Succeed())
+
+		Eventually(func() int { return len(fake.calls()) }).Should(Equal(1))
+		Eventually(func(g Gomega) {
+			var app registryv1alpha1.AppshellApplication
+			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "managed", Namespace: namespace}, &app)).To(Succeed())
+			g.Expect(app.Status.LastAppliedTime).NotTo(BeNil())
+		}).Should(Succeed())
+
+		// The status write has landed; nothing more should follow it until the interval.
+		Consistently(func() int { return len(fake.calls()) }, 3*time.Second, 250*time.Millisecond).Should(Equal(1))
 	})
 })
 

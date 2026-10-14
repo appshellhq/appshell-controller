@@ -71,7 +71,7 @@ Applications:
 | False | `Unauthenticated` | The registry refused the token: wrong audience, or an issuer it doesn't trust. | Every minute. |
 | False | `Invalid` | The registry refused the spec: a package not published, a field it doesn't accept. | Every minute. |
 | False | `RegistryUnavailable` | The registry couldn't be reached, or answered with its own error. | With backoff. |
-| False | `DeactivationFailed` | A `Delete` policy couldn't deactivate, so the resource is held. | Every minute. |
+| False | `DeactivationFailed` | A `Delete` policy couldn't deactivate, so the resource is held. | Every minute if refused; with backoff if the registry couldn't be reached. |
 
 An Event says what moved when an apply changed anything, and once when a refusal begins.
 
@@ -83,7 +83,8 @@ An Event says what moved when an apply changed anything, and once when a refusal
   reconciled. No finalizer is held, so a delete never waits on the registry.
 - **`Delete`**: the controller deactivates every package in the application, and only then lets
   the resource go. Its settings are left as they are. If deactivation can't succeed, the resource
-  is held, with a condition saying why; switching it to `Orphan` lets it go.
+  is held, with a condition saying why; switching it to `Orphan` lets it go. It takes effect once
+  the controller has reconciled the resource: one deleted before that was never applied, and goes.
 
 ## Configuration
 

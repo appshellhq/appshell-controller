@@ -31,9 +31,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	registryv1alpha1 "github.com/appshellhq/appshell-controller/api/v1alpha1"
 	"github.com/appshellhq/appshell-controller/internal/registry"
@@ -135,6 +138,11 @@ func (r *AppshellApplicationReconciler) holdFinalizerFor(ctx context.Context, ap
 // settings are left as they are. If it can't succeed — the trust record is gone, say — the
 // resource is held, with a condition saying how to let it go without deactivating: switch the
 // policy to Orphan. A delete never silently skips what the policy promised.
+//
+// The finalizer is added when the controller first reconciles the resource. One deleted before
+// that holds none, and goes: the controller never applied it, so there is nothing of its to
+// deactivate. Adding the finalizer at creation instead would take a mutating webhook, and its
+// certificates, for a resource that never reached the registry.
 func (r *AppshellApplicationReconciler) finalize(ctx context.Context, app *registryv1alpha1.AppshellApplication) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(app, Finalizer) {
 		return ctrl.Result{}, nil
@@ -151,13 +159,17 @@ func (r *AppshellApplicationReconciler) finalize(ctx context.Context, app *regis
 
 		if _, err := r.Registry.Apply(ctx, deactivate); err != nil {
 			before := app.DeepCopy()
+			wasReason := readyReason(app)
 			r.setReady(app, metav1.ConditionFalse, ReasonDeactivationFailed, fmt.Sprintf(
 				"Deactivating %s before deletion failed: %v. Set deletionPolicy: Orphan to delete "+
 					"this resource and leave the application as it is.", app.Spec.Name, err))
 			if patchErr := r.patchStatus(ctx, app, before); patchErr != nil {
 				return retryOnConflict(patchErr)
 			}
-			r.event(app, corev1.EventTypeWarning, ReasonDeactivationFailed, "Deactivate", err.Error())
+			// Once, on entering the state, not on every poll while the resource is held.
+			if wasReason != ReasonDeactivationFailed {
+				r.event(app, corev1.EventTypeWarning, ReasonDeactivationFailed, "Deactivate", err.Error())
+			}
 
 			return requeueFor(err)
 		}
@@ -215,11 +227,7 @@ func (r *AppshellApplicationReconciler) failed(
 	}
 
 	before := app.DeepCopy()
-	previous := meta.FindStatusCondition(app.Status.Conditions, registryv1alpha1.ConditionReady)
-	wasReason := ""
-	if previous != nil {
-		wasReason = previous.Reason
-	}
+	wasReason := readyReason(app)
 	r.setReady(app, metav1.ConditionFalse, reason, err.Error())
 
 	if patchErr := r.patchStatus(ctx, app, before); patchErr != nil {
@@ -232,6 +240,15 @@ func (r *AppshellApplicationReconciler) failed(
 	}
 
 	return requeueFor(err)
+}
+
+// readyReason is the Ready condition's current reason, or "" before there is one.
+func readyReason(app *registryv1alpha1.AppshellApplication) string {
+	if ready := meta.FindStatusCondition(app.Status.Conditions, registryv1alpha1.ConditionReady); ready != nil {
+		return ready.Reason
+	}
+
+	return ""
 }
 
 func (r *AppshellApplicationReconciler) setReady(
@@ -312,10 +329,27 @@ func ResourceOf(app *registryv1alpha1.AppshellApplication) registry.Resource {
 	return registry.Resource{APIVersion: registry.APIVersion, Kind: registry.Kind, Name: s.Name, Spec: spec}
 }
 
+// deletionStarted admits the update that marks a resource for deletion, so a Delete policy's
+// finalizer is handled as soon as the resource is deleted.
+var deletionStarted = predicate.Funcs{
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		return e.ObjectOld.GetDeletionTimestamp().IsZero() && !e.ObjectNew.GetDeletionTimestamp().IsZero()
+	},
+	CreateFunc:  func(event.CreateEvent) bool { return false },
+	DeleteFunc:  func(event.DeleteEvent) bool { return false },
+	GenericFunc: func(event.GenericEvent) bool { return false },
+}
+
 // SetupWithManager sets up the controller with the Manager.
+//
+// It reacts to a change of spec (a new generation) and to deletion starting, and to nothing else
+// about its resources: not to its own status writes, which would otherwise trigger another apply,
+// whose status write would trigger another, applying continuously instead of on the interval.
+// The interval itself is a requeue, and a restart lists every resource afresh.
 func (r *AppshellApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&registryv1alpha1.AppshellApplication{}).
+		For(&registryv1alpha1.AppshellApplication{},
+			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{}, deletionStarted))).
 		Named("appshellapplication").
 		Complete(r)
 }
