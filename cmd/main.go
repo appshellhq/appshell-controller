@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -38,6 +39,7 @@ import (
 
 	registryv1alpha1 "github.com/appshellhq/appshell-controller/api/v1alpha1"
 	"github.com/appshellhq/appshell-controller/internal/controller"
+	"github.com/appshellhq/appshell-controller/internal/registry"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -64,6 +66,9 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var watchNamespaces string
+	var registryURL, registryTokenPath string
+	var allowInsecureRegistry bool
+	var reconcileInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -88,6 +93,16 @@ func main() {
 		"Comma-separated namespaces whose AppshellApplications this controller reconciles. Empty watches every "+
 			"namespace. Every resource it watches is applied with its identity, so this, with who may create "+
 			"AppshellApplications, decides who can use that identity.")
+	// The registry is the operator's choice, never a resource's: the controller presents its token
+	// there and nowhere else.
+	flag.StringVar(&registryURL, "registry-url", "",
+		"The appshell registry to apply to, as an https URL. Required.")
+	flag.StringVar(&registryTokenPath, "registry-token-path", "/var/run/secrets/appshell/token",
+		"The projected service-account token presented to the registry, minted for its deploy audience.")
+	flag.BoolVar(&allowInsecureRegistry, "allow-insecure-registry", false,
+		"Allow a plain http registry URL. For local development only: the token is a credential.")
+	flag.DurationVar(&reconcileInterval, "reconcile-interval", 10*time.Minute,
+		"How often an applied AppshellApplication is applied again, which reverts drift in the registry.")
 	// Structured JSON by default, as a production log pipeline wants it; --zap-devel for local runs.
 	opts := zap.Options{
 		Development: false,
@@ -96,6 +111,18 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Refused at startup rather than at the first apply: a controller that can't reach its
+	// registry should fail where the operator is looking.
+	registryClient, err := registry.NewClient(registryURL, registryTokenPath, allowInsecureRegistry)
+	if err != nil {
+		setupLog.Error(err, "Invalid registry configuration")
+		os.Exit(1)
+	}
+	if reconcileInterval < time.Minute {
+		setupLog.Error(nil, "--reconcile-interval must be at least a minute", "interval", reconcileInterval)
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -202,8 +229,11 @@ func main() {
 	}
 
 	if err := (&controller.AppshellApplicationReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Registry: registryClient,
+		Recorder: mgr.GetEventRecorder("appshell-controller"),
+		Interval: reconcileInterval,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "appshellapplication")
 		os.Exit(1)

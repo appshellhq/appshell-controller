@@ -21,8 +21,8 @@ spec:
   deletionPolicy: Orphan       # the default: deleting this resource leaves the application alone
 ```
 
-> **Status: in development** (`v1alpha1`). The API and the resource's schema are in place; the
-> controller doesn't yet apply to the registry. Tracked in
+> **Status: in development** (`v1alpha1`). The controller applies and reports status; a Helm chart
+> and signed releases come next. Tracked in
 > [appshellhq/appshell#25](https://github.com/appshellhq/appshell/issues/25).
 
 ## How it works
@@ -59,6 +59,55 @@ Applications:
 - which namespaces the controller watches: `--watch-namespaces=a,b` limits its cache, and so
   everything it sees and acts on, to those. Left empty, it watches every namespace, and the
   manifests here grant it a ClusterRole to match.
+
+## What it reports
+
+`kubectl get aapp` shows each resource's application and whether it's `Ready`:
+
+| Ready | Reason | Means | Retried |
+|---|---|---|---|
+| True | `Applied` | The registry application matches the spec. | Every `--reconcile-interval`, which reverts drift. |
+| False | `NotTrusted` | No trusted-deployment record on the application matches the controller, or the application doesn't exist. | Every minute, until one does. |
+| False | `Unauthenticated` | The registry refused the token: wrong audience, or an issuer it doesn't trust. | Every minute. |
+| False | `Invalid` | The registry refused the spec: a package not published, a field it doesn't accept. | Every minute. |
+| False | `RegistryUnavailable` | The registry couldn't be reached, or answered with its own error. | With backoff. |
+| False | `DeactivationFailed` | A `Delete` policy couldn't deactivate, so the resource is held. | Every minute if refused; with backoff if the registry couldn't be reached. |
+
+An Event says what moved when an apply changed anything, and once when a refusal begins.
+
+## Deletion
+
+`deletionPolicy` decides what deleting a resource does:
+
+- **`Orphan`** (the default): nothing. The application keeps its packages and simply stops being
+  reconciled. No finalizer is held, so a delete never waits on the registry.
+- **`Delete`**: the controller deactivates every package in the application, and only then lets
+  the resource go. Its settings are left as they are. If deactivation can't succeed, the resource
+  is held, with a condition saying why; switching it to `Orphan` lets it go. It takes effect once
+  the controller has reconciled the resource: one deleted before that was never applied, and goes.
+
+## Configuration
+
+| Flag | Default | |
+|---|---|---|
+| `--registry-url` | (required) | The registry, over https. |
+| `--registry-token-path` | `/var/run/secrets/appshell/token` | The projected service-account token, minted for the registry's deploy audience. |
+| `--reconcile-interval` | `10m` | How often an applied resource is applied again. At least a minute. |
+| `--watch-namespaces` | every namespace | Comma-separated namespaces to reconcile. |
+| `--allow-insecure-registry` | `false` | Allow a plain http registry. Local development only. |
+
+The token comes from a projected volume; `config/manager/manager.yaml` shows it, with a placeholder
+registry for an overlay to replace:
+
+```yaml
+- name: registry-token
+  projected:
+    sources:
+      - serviceAccountToken:
+          audience: https://registry.example.com/deploy   # the registry's deploy audience
+          expirationSeconds: 600
+          path: token
+```
 
 ## Development
 

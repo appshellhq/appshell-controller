@@ -18,163 +18,182 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/config"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	registryv1alpha1 "github.com/appshellhq/appshell-controller/api/v1alpha1"
+	"github.com/appshellhq/appshell-controller/internal/registry"
 )
 
-const (
-	namespace = "default"
-	// storefront is the registry application the tests' resources stand for.
-	storefront = "acme/storefront"
-)
-
-func application(name string, spec registryv1alpha1.AppshellApplicationSpec) *registryv1alpha1.AppshellApplication {
-	return &registryv1alpha1.AppshellApplication{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec:       spec,
-	}
+// fakeRegistry stands in for the registry: it records what it was asked to apply, and answers
+// with result, or err.
+type fakeRegistry struct {
+	mu      sync.Mutex
+	applied []registry.Resource
+	result  registry.Result
+	err     error
 }
 
-var _ = Describe("AppshellApplication", func() {
+func (f *fakeRegistry) Apply(_ context.Context, r registry.Resource) (registry.Result, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applied = append(f.applied, r)
+
+	return f.result, f.err
+}
+
+func (f *fakeRegistry) calls() []registry.Resource {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]registry.Resource(nil), f.applied...)
+}
+
+const (
+	interval = 10 * time.Minute
+	// catalog is the package the tests' resources activate.
+	catalog = "acme/catalog@1.2.0"
+)
+
+var _ = Describe("Reconciling an AppshellApplication", func() {
 	ctx := context.Background()
+	const name = "reconciled"
+	key := types.NamespacedName{Name: name, Namespace: namespace}
 
-	// The CRD's own validation, enforced by a real API server: what a resource may say is
-	// decided here, before anything reaches the controller or the registry.
-	Context("the resource's schema", func() {
-		AfterEach(func() {
-			Expect(k8sClient.DeleteAllOf(ctx, &registryv1alpha1.AppshellApplication{},
-				client.InNamespace(namespace))).To(Succeed())
-		})
+	var (
+		fake       *fakeRegistry
+		recorder   *events.FakeRecorder
+		reconciler *AppshellApplicationReconciler
+	)
 
-		It("defaults deletionPolicy to Orphan, so a mistaken delete can't take an application down", func() {
-			app := application("defaulted", registryv1alpha1.AppshellApplicationSpec{Name: storefront})
-			Expect(k8sClient.Create(ctx, app)).To(Succeed())
-			Expect(app.Spec.DeletionPolicy).To(Equal(registryv1alpha1.DeletionPolicyOrphan))
-		})
+	create := func(spec registryv1alpha1.AppshellApplicationSpec) {
+		Expect(k8sClient.Create(ctx, application(name, spec))).To(Succeed())
+	}
+	reconcileOnce := func() (reconcile.Result, error) {
+		return reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+	}
+	fetch := func() *registryv1alpha1.AppshellApplication {
+		var app registryv1alpha1.AppshellApplication
+		Expect(k8sClient.Get(ctx, key, &app)).To(Succeed())
 
-		It("requires a scope-qualified name, since the controller has no scope of its own", func() {
-			app := application("unscoped", registryv1alpha1.AppshellApplicationSpec{Name: "storefront"})
-			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
-		})
+		return &app
+	}
+	ready := func() *metav1.Condition {
+		return meta.FindStatusCondition(fetch().Status.Conditions, registryv1alpha1.ConditionReady)
+	}
+	// What the recorder emitted, without waiting for more.
+	emitted := func() []string {
+		var out []string
+		for {
+			select {
+			case e := <-recorder.Events:
+				out = append(out, e)
+			default:
+				return out
+			}
+		}
+	}
 
-		It("refuses a package that isn't pinned", func() {
-			app := application("unpinned", registryv1alpha1.AppshellApplicationSpec{
-				Name:     storefront,
-				Packages: []string{"acme/catalog"},
-			})
-			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
-		})
-
-		It("refuses a deletion policy it doesn't know", func() {
-			app := application("policy", registryv1alpha1.AppshellApplicationSpec{
-				Name:           storefront,
-				DeletionPolicy: "Cascade",
-			})
-			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
-		})
-
-		It("refuses a stylesheet that isn't http or https", func() {
-			app := application("stylesheet", registryv1alpha1.AppshellApplicationSpec{
-				Name:  storefront,
-				Shell: &registryv1alpha1.ShellConfig{StylesheetURL: new("javascript:alert(1)")},
-			})
-			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
-		})
-
-		It("refuses a theme ref that isn't pinned, which would drift to each new version", func() {
-			app := application("unpinned-theme", registryv1alpha1.AppshellApplicationSpec{
-				Name:  storefront,
-				Shell: &registryv1alpha1.ShellConfig{Theme: &registryv1alpha1.ThemeSelection{Ref: new("appshell/neutral-ice")}},
-			})
-			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
-		})
-
-		It("accepts a pinned theme ref", func() {
-			app := application("pinned-theme", registryv1alpha1.AppshellApplicationSpec{
-				Name: storefront,
-				Shell: &registryv1alpha1.ShellConfig{
-					Theme: &registryv1alpha1.ThemeSelection{Ref: new("appshell/neutral-ice@1.0.0")},
-				},
-			})
-			Expect(k8sClient.Create(ctx, app)).To(Succeed())
-		})
-
-		It("refuses a favicon under any scheme but http or https", func() {
-			app := application("favicon", registryv1alpha1.AppshellApplicationSpec{
-				Name:  storefront,
-				Shell: &registryv1alpha1.ShellConfig{FaviconURL: new("javascript:alert(1)")},
-			})
-			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed())
-		})
-
-		It("accepts a favicon as a relative path, as the registry does", func() {
-			app := application("relative-favicon", registryv1alpha1.AppshellApplicationSpec{
-				Name:  storefront,
-				Shell: &registryv1alpha1.ShellConfig{FaviconURL: new("/favicon.ico")},
-			})
-			Expect(k8sClient.Create(ctx, app)).To(Succeed())
-		})
-
-		// A different application is a different resource; retargeting one would leave the
-		// first application unreconciled and silently take over the second.
-		It("keeps the name fixed once set", func() {
-			app := application("fixed", registryv1alpha1.AppshellApplicationSpec{Name: storefront})
-			Expect(k8sClient.Create(ctx, app)).To(Succeed())
-
-			app.Spec.Name = "acme/elsewhere"
-			Expect(k8sClient.Update(ctx, app)).To(MatchError(ContainSubstring("name is immutable")))
-		})
+	BeforeEach(func() {
+		fake = &fakeRegistry{result: registry.Result{ID: storefront, Changed: new(true),
+			Changes: []string{"activated " + catalog}}}
+		recorder = events.NewFakeRecorder(20)
+		reconciler = &AppshellApplicationReconciler{
+			Client: k8sClient, Scheme: k8sClient.Scheme(), Registry: fake, Recorder: recorder, Interval: interval,
+		}
 	})
 
-	Context("reconciling", func() {
-		const name = "reconciled"
-		key := types.NamespacedName{Name: name, Namespace: namespace}
+	AfterEach(func() { removeAll(ctx) })
 
-		BeforeEach(func() {
-			Expect(k8sClient.Create(ctx, application(name, registryv1alpha1.AppshellApplicationSpec{
-				Name:     storefront,
-				Packages: []string{"acme/catalog@1.2.0"},
-			}))).To(Succeed())
-		})
+	Context("applying", func() {
+		It("applies the spec, and records that the application matches it", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront, Packages: []string{catalog}})
 
-		AfterEach(func() {
-			Expect(k8sClient.DeleteAllOf(ctx, &registryv1alpha1.AppshellApplication{},
-				client.InNamespace(namespace))).To(Succeed())
-		})
-
-		It("records the generation it saw, and that it has yet to apply it", func() {
-			reconciler := &AppshellApplicationReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			result, err := reconcileOnce()
 			Expect(err).NotTo(HaveOccurred())
+			// Applied again on the interval: that's what reverts a package activated by hand.
+			Expect(result.RequeueAfter).To(Equal(interval))
 
-			var app registryv1alpha1.AppshellApplication
-			Expect(k8sClient.Get(ctx, key, &app)).To(Succeed())
+			Expect(fake.calls()).To(HaveLen(1))
+			sent := fake.calls()[0]
+			Expect(sent.Name).To(Equal(storefront))
+			Expect(*sent.Spec.Packages).To(Equal([]string{catalog}))
+
+			app := fetch()
 			Expect(app.Status.ObservedGeneration).To(Equal(app.Generation))
+			Expect(app.Status.AppliedPackages).To(Equal([]string{catalog}))
+			Expect(app.Status.LastAppliedTime).NotTo(BeNil())
+			Expect(ready().Status).To(Equal(metav1.ConditionTrue))
+			Expect(ready().Reason).To(Equal(ReasonApplied))
 
-			ready := meta.FindStatusCondition(app.Status.Conditions, registryv1alpha1.ConditionReady)
-			Expect(ready).NotTo(BeNil())
-			Expect(ready.Status).To(Equal(metav1.ConditionUnknown))
-			Expect(ready.Reason).To(Equal(ReasonAwaitingApply))
+			Expect(emitted()).To(ConsistOf(ContainSubstring("activated acme/catalog@1.2.0")))
+		})
+
+		// An apply on every interval that changes nothing would otherwise be an Event every time.
+		It("says nothing when nothing moved", func() {
+			fake.result = registry.Result{ID: storefront, Changed: new(false)}
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront})
+
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ready().Status).To(Equal(metav1.ConditionTrue))
+			Expect(emitted()).To(BeEmpty())
+		})
+
+		// A refusal changes when a person acts, so it's polled, not backed off — and reported
+		// once, not once per poll.
+		It("records a refusal with its reason, polls it, and warns once", func() {
+			fake.err = &registry.Error{Status: 403, Message: "No trusted deployer on acme/storefront",
+				Refusal: registry.RefusalNotTrusted}
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront})
+
+			result, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(refusedRetry))
+			Expect(ready().Status).To(Equal(metav1.ConditionFalse))
+			Expect(ready().Reason).To(Equal(string(registry.RefusalNotTrusted)))
+			Expect(ready().Message).To(ContainSubstring("No trusted deployer"))
+
+			_, err = reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(emitted()).To(HaveLen(1))
+		})
+
+		It("backs off a failure worth retrying, and says the registry is unavailable", func() {
+			fake.err = &registry.Error{Message: "reaching the registry: connection refused"}
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront})
+
+			_, err := reconcileOnce()
+			Expect(err).To(HaveOccurred())
+			Expect(ready().Status).To(Equal(metav1.ConditionFalse))
+			Expect(ready().Reason).To(Equal(ReasonRegistryUnavailable))
 		})
 
 		// Another writer got there first. Retried against what's there now, rather than written
 		// over, and not reported as an error: a lost race is expected.
 		It("retries a status write that lost a race, instead of overwriting it", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront})
 			watching, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
 			Expect(err).NotTo(HaveOccurred())
-			conflicted := interceptor.NewClient(watching, interceptor.Funcs{
+			reconciler.Client = interceptor.NewClient(watching, interceptor.Funcs{
 				SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch,
 					...client.SubResourcePatchOption) error {
 					return apierrors.NewConflict(schema.GroupResource{
@@ -182,20 +201,227 @@ var _ = Describe("AppshellApplication", func() {
 					}, name, nil)
 				},
 			})
-			reconciler := &AppshellApplicationReconciler{Client: conflicted, Scheme: k8sClient.Scheme()}
 
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			result, err := reconcileOnce()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(conflictRetry))
 		})
 
 		It("does nothing for a resource that's gone", func() {
-			reconciler := &AppshellApplicationReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: "absent", Namespace: namespace},
-			})
+			_, err := reconcileOnce()
 			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.calls()).To(BeEmpty())
 		})
+	})
+
+	Context("deleting", func() {
+		deleteIt := func() { Expect(k8sClient.Delete(ctx, fetch())).To(Succeed()) }
+		gone := func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &registryv1alpha1.AppshellApplication{}))
+		}
+
+		// Orphan holds no finalizer, so deleting can't wait on the registry, and doesn't touch it.
+		It("lets an orphaned resource go, leaving the application alone", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront})
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fetch().Finalizers).To(BeEmpty())
+
+			deleteIt()
+			Expect(gone()).To(BeTrue())
+			Expect(fake.calls()).To(HaveLen(1)) // the apply, and no deactivation
+		})
+
+		It("deactivates every package before letting a Delete resource go", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{
+				Name:           storefront,
+				Packages:       []string{catalog},
+				AllowOverlays:  new(true),
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete,
+			})
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(controllerutil.ContainsFinalizer(fetch(), Finalizer)).To(BeTrue())
+
+			deleteIt()
+			_, err = reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gone()).To(BeTrue())
+
+			// An empty package set and nothing else: the application's settings are left alone.
+			deactivation := fake.calls()[len(fake.calls())-1]
+			Expect(deactivation.Name).To(Equal(storefront))
+			Expect(*deactivation.Spec.Packages).To(BeEmpty())
+			Expect(deactivation.Spec.AllowOverlays).To(BeNil())
+			Expect(deactivation.Spec.Shell).To(BeNil())
+		})
+
+		// A retry after a lost race finds nothing left to deactivate, and says nothing.
+		It("says nothing when deactivating moves nothing", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			emitted() // the apply's own event
+
+			fake.result = registry.Result{ID: storefront, Changed: new(false)}
+			deleteIt()
+			_, err = reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gone()).To(BeTrue())
+			Expect(emitted()).To(BeEmpty())
+		})
+
+		// Never silently skips what the policy promised, and never holds a resource with no way out.
+		It("holds a Delete resource it can't deactivate, until the policy becomes Orphan", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+
+			fake.err = &registry.Error{Status: 403, Message: "No trusted deployer",
+				Refusal: registry.RefusalNotTrusted}
+			deleteIt()
+			result, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(refusedRetry))
+			Expect(gone()).To(BeFalse())
+			Expect(ready().Reason).To(Equal(ReasonDeactivationFailed))
+			Expect(ready().Message).To(ContainSubstring("deletionPolicy: Orphan"))
+
+			app := fetch()
+			app.Spec.DeletionPolicy = registryv1alpha1.DeletionPolicyOrphan
+			Expect(k8sClient.Update(ctx, app)).To(Succeed())
+			calls := len(fake.calls())
+
+			_, err = reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gone()).To(BeTrue())
+			Expect(fake.calls()).To(HaveLen(calls)) // let go without trying again
+		})
+
+		// No finalizer yet, so it goes; and it was never applied, so there is nothing to deactivate.
+		It("lets a Delete resource go that was deleted before it was ever reconciled", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
+			deleteIt()
+			Expect(gone()).To(BeTrue())
+
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.calls()).To(BeEmpty())
+		})
+
+		It("warns once when it can't deactivate, not on every poll while it's held", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			emitted() // the apply's own event
+
+			fake.err = &registry.Error{Status: 403, Message: "No trusted deployer",
+				Refusal: registry.RefusalNotTrusted}
+			deleteIt()
+			for range 3 {
+				_, err = reconcileOnce()
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(emitted()).To(HaveLen(1))
+		})
+
+		It("releases the finalizer when the policy changes from Delete to Orphan", func() {
+			create(registryv1alpha1.AppshellApplicationSpec{Name: storefront,
+				DeletionPolicy: registryv1alpha1.DeletionPolicyDelete})
+			_, err := reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+
+			app := fetch()
+			app.Spec.DeletionPolicy = registryv1alpha1.DeletionPolicyOrphan
+			Expect(k8sClient.Update(ctx, app)).To(Succeed())
+			_, err = reconcileOnce()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fetch().Finalizers).To(BeEmpty())
+		})
+	})
+})
+
+// Under a running manager, as in production: the controller's own status writes must not trigger
+// another apply, or it would apply continuously instead of once per interval.
+var _ = Describe("Running under a manager", func() {
+	It("applies a resource once, and isn't retriggered by its own status writes", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+			Scheme:                 k8sClient.Scheme(),
+			Metrics:                metricsserver.Options{BindAddress: "0"},
+			HealthProbeBindAddress: "0",
+			// Each test that starts a manager registers the same controller name.
+			Controller: config.Controller{SkipNameValidation: new(true)},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		fake := &fakeRegistry{result: registry.Result{ID: storefront, Changed: new(true),
+			Changes: []string{"activated " + catalog}}}
+		Expect((&AppshellApplicationReconciler{
+			Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Registry: fake,
+			Recorder: events.NewFakeRecorder(20), Interval: interval,
+		}).SetupWithManager(mgr)).To(Succeed())
+
+		done := make(chan struct{})
+		go func() {
+			defer GinkgoRecover()
+			defer close(done)
+			Expect(mgr.Start(ctx)).To(Succeed())
+		}()
+		DeferCleanup(func() { cancel(); <-done; removeAll(context.Background()) })
+
+		Expect(k8sClient.Create(ctx, application("managed", registryv1alpha1.AppshellApplicationSpec{
+			Name: storefront, Packages: []string{catalog},
+		}))).To(Succeed())
+
+		Eventually(func() int { return len(fake.calls()) }).Should(Equal(1))
+		Eventually(func(g Gomega) {
+			var app registryv1alpha1.AppshellApplication
+			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "managed", Namespace: namespace}, &app)).To(Succeed())
+			g.Expect(app.Status.LastAppliedTime).NotTo(BeNil())
+		}).Should(Succeed())
+
+		// The status write has landed; nothing more should follow it until the interval.
+		Consistently(func() int { return len(fake.calls()) }, 3*time.Second, 250*time.Millisecond).Should(Equal(1))
+	})
+})
+
+var _ = Describe("ResourceOf", func() {
+	It("says the same thing in the registry's words, leaving out what the spec leaves out", func() {
+		resource := ResourceOf(&registryv1alpha1.AppshellApplication{Spec: registryv1alpha1.AppshellApplicationSpec{
+			Name: storefront,
+			Shell: &registryv1alpha1.ShellConfig{
+				Root:      new("ContainerModule/Container"),
+				RootProps: &apiextensionsv1.JSON{Raw: []byte(`{"mode":"compact"}`)},
+			},
+			Overrides:        &apiextensionsv1.JSON{Raw: []byte(`{"vars":{"cart":{"currency":"EUR"}}}`)},
+			TokenEnforcement: new(registryv1alpha1.EnforcementLevel("block")),
+		}})
+
+		Expect(resource.APIVersion).To(Equal(registry.APIVersion))
+		Expect(resource.Kind).To(Equal(registry.Kind))
+		Expect(resource.Name).To(Equal(storefront))
+		Expect(string(resource.Spec.Shell)).To(MatchJSON(`{"root":"ContainerModule/Container","rootProps":{"mode":"compact"}}`))
+		Expect(string(resource.Spec.Overrides)).To(MatchJSON(`{"vars":{"cart":{"currency":"EUR"}}}`))
+		Expect(*resource.Spec.TokenEnforcement).To(Equal("block"))
+
+		encoded, err := json.Marshal(resource.Spec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).NotTo(ContainSubstring("packages"))
+		Expect(string(encoded)).NotTo(ContainSubstring("allowOverlays"))
+	})
+
+	// Left out or empty leaves the application's packages alone; only deletion sends an empty set.
+	It("sends no package set for an empty one", func() {
+		resource := ResourceOf(&registryv1alpha1.AppshellApplication{Spec: registryv1alpha1.AppshellApplicationSpec{
+			Name: storefront, Packages: []string{},
+		}})
+		Expect(resource.Spec.Packages).To(BeNil())
 	})
 })

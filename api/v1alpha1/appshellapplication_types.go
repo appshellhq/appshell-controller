@@ -37,7 +37,8 @@ const (
 	// pruned by a sync, can't take an application down.
 	DeletionPolicyOrphan DeletionPolicy = "Orphan"
 
-	// DeletionPolicyDelete deactivates the application's packages before the resource goes.
+	// DeletionPolicyDelete deactivates the application's packages before the resource goes,
+	// once the controller has reconciled it; one deleted before that was never applied, and goes.
 	// It concerns this one application only, never others that activate the same packages.
 	DeletionPolicyDelete DeletionPolicy = "Delete"
 )
