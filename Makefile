@@ -126,6 +126,10 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	$(CONTAINER_TOOL) buildx build --builder appshell-controller-builder --push \
 		--platform=$(PLATFORMS) --tag ${IMG} .
 
+.PHONY: chart-crds
+chart-crds: manifests ## Generate the Helm chart's CRD template from the CRD controller-gen writes.
+	hack/chart-crds.sh
+
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist

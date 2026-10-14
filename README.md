@@ -21,9 +21,45 @@ spec:
   deletionPolicy: Orphan       # the default: deleting this resource leaves the application alone
 ```
 
-> **Status: in development** (`v1alpha1`). The controller applies and reports status; a Helm chart
-> and signed releases come next. Tracked in
+> **Status: in development** (`v1alpha1`). Tracked in
 > [appshellhq/appshell#25](https://github.com/appshellhq/appshell/issues/25).
+
+## Install
+
+The chart is published to GHCR as an OCI artifact, with the image it installs pinned by digest:
+
+```sh
+helm install appshell-controller oci://ghcr.io/appshellhq/charts/appshell-controller \
+  --version <version> --namespace appshell-system --create-namespace \
+  --set registry.url=https://registry.example.com
+```
+
+Then trust it on each application it should apply. The chart's notes print the command with this
+release's namespace and service account filled in. See the chart's
+[values](charts/appshell-controller/values.yaml) for the rest: the namespaces it watches, the
+reconcile interval, metrics, the network policy.
+
+### Verify what you install
+
+Every release's image and chart are signed with Sigstore, keylessly, by the release workflow
+itself, and carry SLSA build provenance:
+
+```sh
+cosign verify ghcr.io/appshellhq/appshell-controller:<version> \
+  --certificate-identity-regexp '^https://github.com/appshellhq/appshell-controller/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+gh attestation verify oci://ghcr.io/appshellhq/appshell-controller:<version> --owner appshellhq
+```
+
+The same works for `ghcr.io/appshellhq/charts/appshell-controller:<version>`.
+
+### Argo CD health
+
+[`charts/appshell-controller/argocd/health.lua`](charts/appshell-controller/argocd/health.lua) maps
+an AppshellApplication's status to Argo CD health: Progressing until the controller has applied
+the current generation, then Healthy or Degraded from its `Ready` condition. Add it to `argocd-cm`
+as `resource.customizations.health.registry.appshell.org_AppshellApplication`.
 
 ## How it works
 
@@ -109,6 +145,16 @@ registry for an overlay to replace:
           path: token
 ```
 
+## Releases
+
+Releases are cut by [release-please](https://github.com/googleapis/release-please) from
+conventional commits. It keeps a release PR open with the next version and the changelog; merging
+it tags `vX.Y.Z`, and the release workflow builds the multi-arch image, signs it, attests its
+provenance and SBOM, and publishes the chart with the image pinned by digest. It runs in a
+`release` environment only `main` may deploy from, so nothing but a merged release can publish.
+
+Before 1.0, a `feat:` bumps the minor version and a `fix:` the patch.
+
 ## Development
 
 Requires Go (the version in `go.mod`), Docker, and [kind](https://kind.sigs.k8s.io/) for the e2e
@@ -119,6 +165,7 @@ make test        # unit tests, and controller tests against a real API server (e
 make lint        # golangci-lint, with Kubernetes logging conventions
 make manifests   # regenerate the CRD and RBAC from the types and markers
 make test-e2e    # deploy into a throwaway kind cluster and test it there
+make chart-crds  # regenerate the chart's CRD template from the generated CRD
 ```
 
 The CRD in `config/crd/bases` and the deepcopy code are generated from `api/v1alpha1`; CI fails if

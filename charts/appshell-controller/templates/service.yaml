@@ -1,0 +1,19 @@
+{{- if .Values.metrics.enabled }}
+# The secure metrics endpoint. A scraper authenticates with its own service-account token, which
+# must be bound to the metrics-reader ClusterRole.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "appshell-controller.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appshell-controller.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "appshell-controller.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

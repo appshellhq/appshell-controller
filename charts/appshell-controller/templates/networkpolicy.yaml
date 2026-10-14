@@ -1,0 +1,27 @@
+{{- if .Values.networkPolicy.enabled }}
+# Nothing reaches the controller but a metrics scrape from the namespaces allowed below. It
+# serves nothing else: no webhooks, no API. Egress, to the API server and the registry, is left
+# to the cluster's own policy, since where those are differs from one cluster to the next.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "appshell-controller.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appshell-controller.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "appshell-controller.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- if .Values.metrics.enabled }}
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.metricsNamespaceSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.metrics.port }}
+    {{- end }}
+{{- end }}
