@@ -64,6 +64,12 @@ jobs:
           render --set registry.url=https://registry.example.com --set metrics.enabled=false \
             --set networkPolicy.enabled=false --set leaderElection.enabled=false --set crds.install=false | validate
 
+      # The token's audience follows the URL as the controller normalises it, trailing slashes and all.
+      - name: Derive the audience from the normalised URL
+        run: |
+          helm template ci "$CHART" --set registry.url=https://registry.example.com// \
+            | grep -qx '                  audience: https://registry.example.com/deploy'
+
       # What the chart must refuse, refused.
       - name: Refuse unsafe values
         run: |
@@ -75,4 +81,5 @@ jobs:
           refuse --set registry.url=https://registry.example.com --set reconcileInterval=30s
           refuse --set registry.url=https://registry.example.com --set replicaCounts=2
           refuse --set registry.url=https://registry.example.com --set metrics.port=8081
+          refuse --set registry.url=https://registry.example.com --set serviceAccount.annotations.n=1
           refuse --set registry.url=https://registry.example.com --set podLabels.app\\.kubernetes\\.io/name=other

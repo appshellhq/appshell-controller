@@ -46,7 +46,8 @@ requires a URL; this is the rule the schema can't express.
 {{- if and (not (hasPrefix "https://" $url)) (not .Values.registry.allowInsecure) -}}
 {{- fail (printf "registry.url %q is not https; the controller won't send its token in the clear (registry.allowInsecure for local development)" $url) -}}
 {{- end -}}
-{{- trimSuffix "/" $url -}}
+{{- /* Every trailing slash, as the controller strips them, so the audience matches its URL. */ -}}
+{{- regexReplaceAll "/+$" $url "" -}}
 {{- end -}}
 
 {{/* The registry's deploy audience: the URL with /deploy, unless its operator chose another. */}}
