@@ -134,12 +134,17 @@ jobs:
       - name: Sign the image
         run: cosign sign --yes "${IMAGE}@${{ steps.image.outputs.digest }}"
 
+      # No artifact-metadata storage record: that's the registry-location metadata behind
+      # GitHub's linked-artifacts view, which nothing here uses, and it would need the job to hold
+      # artifact-metadata: write as well. The attestation itself is pushed to the registry beside
+      # the image, which is where verification reads it.
       - name: Attest the image's provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
 
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
@@ -172,3 +177,4 @@ jobs:
           subject-name: ${{ env.CHARTS }}/appshell-controller
           subject-digest: ${{ steps.chart.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
