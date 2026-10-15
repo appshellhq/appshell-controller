@@ -1,13 +1,13 @@
 apiVersion: v2
 name: appshell-controller
 description: >-
-  Keeps applications in an appshell registry at the state declared in your cluster, applying
-  AppshellApplication resources with the controller's own workload identity.
+  Keeps applications in an appshell registry at the state declared in your
+  cluster, applying AppshellApplication resources with the controller's own
+  workload identity.
 type: application
-# Set by release-please from conventional commits, with appVersion, on each release.
-version: 0.0.0
-appVersion: "0.0.0"
-kubeVersion: ">=1.30.0-0"
+version: 0.1.0
+appVersion: 0.1.0
+kubeVersion: '>=1.30.0-0'
 home: https://github.com/appshellhq/appshell-controller
 sources:
   - https://github.com/appshellhq/appshell-controller
