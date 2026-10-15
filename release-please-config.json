@@ -5,6 +5,7 @@
       "release-type": "go",
       "package-name": "appshell-controller",
       "include-v-in-tag": true,
+      "initial-version": "0.1.0",
       "bump-minor-pre-major": true,
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
