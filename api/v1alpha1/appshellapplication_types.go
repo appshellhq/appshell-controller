@@ -130,6 +130,7 @@ type ShellConfig struct {
 }
 
 // AppshellApplicationSpec is an application's desired state in the appshell registry.
+// +kubebuilder:validation:XValidation:rule="!has(self.mountPath) || has(self.servingBaseUrl)",message="mountPath needs servingBaseUrl: an application is mounted on a host of its own"
 type AppshellApplicationSpec struct {
 	// name is the registry application this resource stands for, as scope/name. Always
 	// qualified: the controller has no scope of its own, and the registry refuses a workload's
@@ -177,6 +178,18 @@ type AppshellApplicationSpec struct {
 	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:Pattern=`^https?://`
 	ServingBaseURL *string `json:"servingBaseUrl,omitempty"`
+
+	// mountPath is the path the application is mounted at on servingBaseUrl's host, / included:
+	// every path under it renders the application, as console.appshell.org/ renders the console.
+	// Needs servingBaseUrl, on a host the registry grants the application's scope. Left out, the
+	// application renders at /a/{scope}/{name} on the shared serving plane; removed after being
+	// set, the mount is left as it is, as servingBaseUrl is. The registry also refuses dot
+	// segments and its own paths (/a, /p, /shell, /overlays, /v1, /health, /api), which a
+	// pattern here can't say.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:Pattern=`^/([A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*/?)?$`
+	MountPath *string `json:"mountPath,omitempty"`
 
 	// sharedBaselines are the shared dependencies the application pins, by package name, as the
 	// registry's shared objects.

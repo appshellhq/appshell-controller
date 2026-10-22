@@ -81,6 +81,18 @@ spec:
                 - Orphan
                 - Delete
                 type: string
+              mountPath:
+                description: |-
+                  mountPath is the path the application is mounted at on servingBaseUrl's host, / included:
+                  every path under it renders the application, as console.appshell.org/ renders the console.
+                  Needs servingBaseUrl, on a host the registry grants the application's scope. Left out, the
+                  application renders at /a/{scope}/{name} on the shared serving plane; removed after being
+                  set, the mount is left as it is, as servingBaseUrl is. The registry also refuses dot
+                  segments and its own paths (/a, /p, /shell, /overlays, /v1, /health, /api), which a
+                  pattern here can't say.
+                maxLength: 200
+                pattern: ^/([A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*/?)?$
+                type: string
               name:
                 description: |-
                   name is the registry application this resource stands for, as scope/name. Always
@@ -233,6 +245,10 @@ spec:
             required:
             - name
             type: object
+            x-kubernetes-validations:
+            - message: 'mountPath needs servingBaseUrl: an application is mounted
+                on a host of its own'
+              rule: '!has(self.mountPath) || has(self.servingBaseUrl)'
           status:
             description: status is what the controller last observed.
             properties:

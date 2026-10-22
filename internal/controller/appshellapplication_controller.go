@@ -317,6 +317,7 @@ func ResourceOf(app *registryv1alpha1.AppshellApplication) registry.Resource {
 		AllowOverrides:        s.AllowOverrides,
 		AllowOverlays:         s.AllowOverlays,
 		ServingBaseURL:        s.ServingBaseURL,
+		MountPath:             s.MountPath,
 		SharedDepsEnforcement: (*string)(s.SharedDepsEnforcement),
 		TokenEnforcement:      (*string)(s.TokenEnforcement),
 		VarsEnforcement:       (*string)(s.VarsEnforcement),

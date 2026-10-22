@@ -131,6 +131,53 @@ var _ = Describe("The AppshellApplication schema", func() {
 		Expect(k8sClient.Create(ctx, app)).To(Succeed())
 	})
 
+	It("accepts a mount at the root of a host of the application's own", func() {
+		app := application("mounted", registryv1alpha1.AppshellApplicationSpec{
+			Name:           "appshell/console",
+			ServingBaseURL: new("https://console.appshell.org"),
+			MountPath:      new("/"),
+		})
+		Expect(k8sClient.Create(ctx, app)).To(Succeed())
+	})
+
+	It("accepts a mount at a path, with or without its trailing slash", func() {
+		for name, path := range map[string]string{"settings": "/settings", "settings-slash": "/settings/"} {
+			app := application(name, registryv1alpha1.AppshellApplicationSpec{
+				Name:           storefront,
+				ServingBaseURL: new("https://shop.acme.example"),
+				MountPath:      new(path),
+			})
+			Expect(k8sClient.Create(ctx, app)).To(Succeed())
+		}
+	})
+
+	// A mount is on the application's own host; on the shared serving plane it would have no
+	// host to be mounted on.
+	It("refuses a mount without a host to mount it on", func() {
+		app := application("hostless", registryv1alpha1.AppshellApplicationSpec{
+			Name:      storefront,
+			MountPath: new("/"),
+		})
+		Expect(k8sClient.Create(ctx, app)).To(MatchError(ContainSubstring("mountPath needs servingBaseUrl")))
+	})
+
+	It("refuses a mount path that isn't a path", func() {
+		for name, path := range map[string]string{
+			"relative": "settings",
+			"empty":    "",
+			"query":    "/settings?x=1",
+			"doubled":  "//elsewhere.example",
+			"space":    "/my settings",
+		} {
+			app := application(name, registryv1alpha1.AppshellApplicationSpec{
+				Name:           storefront,
+				ServingBaseURL: new("https://shop.acme.example"),
+				MountPath:      new(path),
+			})
+			Expect(k8sClient.Create(ctx, app)).NotTo(Succeed(), "mountPath %q", path)
+		}
+	})
+
 	// A different application is a different resource; retargeting one would leave the first
 	// application unreconciled and silently take over the second.
 	It("keeps the name fixed once set", func() {

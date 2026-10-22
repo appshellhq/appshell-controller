@@ -118,6 +118,11 @@ func (in *AppshellApplicationSpec) DeepCopyInto(out *AppshellApplicationSpec) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.MountPath != nil {
+		in, out := &in.MountPath, &out.MountPath
+		*out = new(string)
+		**out = **in
+	}
 	if in.SharedBaselines != nil {
 		in, out := &in.SharedBaselines, &out.SharedBaselines
 		*out = new(v1.JSON)
