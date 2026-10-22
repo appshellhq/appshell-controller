@@ -66,6 +66,7 @@ type Spec struct {
 	AllowOverrides        *bool           `json:"allowOverrides,omitempty"`
 	AllowOverlays         *bool           `json:"allowOverlays,omitempty"`
 	ServingBaseURL        *string         `json:"servingBaseUrl,omitempty"`
+	MountPath             *string         `json:"mountPath,omitempty"`
 	SharedBaselines       json.RawMessage `json:"sharedBaselines,omitempty"`
 	SharedDepsEnforcement *string         `json:"sharedDepsEnforcement,omitempty"`
 	TokenEnforcement      *string         `json:"tokenEnforcement,omitempty"`

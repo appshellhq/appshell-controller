@@ -417,6 +417,20 @@ var _ = Describe("ResourceOf", func() {
 		Expect(string(encoded)).NotTo(ContainSubstring("allowOverlays"))
 	})
 
+	// The console is mounted at / on a host of its own: both halves reach the registry, or the
+	// mount can't be declared here at all.
+	It("carries where the application is served and mounted", func() {
+		resource := ResourceOf(&registryv1alpha1.AppshellApplication{Spec: registryv1alpha1.AppshellApplicationSpec{
+			Name:           "appshell/console",
+			ServingBaseURL: new("https://console.appshell.org"),
+			MountPath:      new("/"),
+		}})
+
+		encoded, err := json.Marshal(resource.Spec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(MatchJSON(`{"servingBaseUrl":"https://console.appshell.org","mountPath":"/"}`))
+	})
+
 	// Left out or empty leaves the application's packages alone; only deletion sends an empty set.
 	It("sends no package set for an empty one", func() {
 		resource := ResourceOf(&registryv1alpha1.AppshellApplication{Spec: registryv1alpha1.AppshellApplicationSpec{
