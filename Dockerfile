@@ -5,7 +5,7 @@
 
 # The builder runs on the build machine's platform and cross-compiles for the target, rather than
 # emulating it: Go needs no target toolchain, and emulated builds are slow.
-FROM --platform=$BUILDPLATFORM golang:1.26@sha256:37cfcca63222ec499bec5e8ad7aad52dbf7529db36d5812b8eae2f0621aa92d6 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
