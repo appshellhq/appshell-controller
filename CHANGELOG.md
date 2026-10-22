@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/appshellhq/appshell-controller/compare/v0.1.0...v0.2.0) (2026-10-22)
+
+
+### Features
+
+* **api:** mountPath, so an application can be mounted on a host of its own ([#20](https://github.com/appshellhq/appshell-controller/issues/20)) ([339541e](https://github.com/appshellhq/appshell-controller/commit/339541ed5371a4bcb91417251bb3781cf905ffce))
+
+
+### Bug Fixes
+
+* **deps:** build with Go 1.26.10, which distrusts compromised intermediates (GO-2026-6809) ([#21](https://github.com/appshellhq/appshell-controller/issues/21)) ([e41e035](https://github.com/appshellhq/appshell-controller/commit/e41e035101255dcdbd1062e5164adf018d884171))
+
 ## 0.1.0 (2026-10-15)
 
 

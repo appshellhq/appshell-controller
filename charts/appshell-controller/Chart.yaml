@@ -5,8 +5,8 @@ description: >-
   cluster, applying AppshellApplication resources with the controller's own
   workload identity.
 type: application
-version: 0.1.0
-appVersion: 0.1.0
+version: 0.2.0
+appVersion: 0.2.0
 kubeVersion: '>=1.30.0-0'
 home: https://github.com/appshellhq/appshell-controller
 sources:
